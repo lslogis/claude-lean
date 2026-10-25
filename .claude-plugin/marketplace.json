@@ -1,0 +1,6 @@
+{
+  "name": "lean",
+  "owner": { "name": "lslogis" },
+  "description": "One skill + one harness that keeps Claude Code lean without getting in the way",
+  "plugins": [{ "name": "lean", "source": "./" }]
+}
