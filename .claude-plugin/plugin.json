@@ -1,6 +1,6 @@
 {
   "name": "lean",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "One skill + one harness: work rules, long success logs and JSON trimmed, .contextignore, file list restored after compaction, and /lean (review, repo, debt, commit, rename, audit, stats)",
   "author": { "name": "lslogis" },
   "homepage": "https://github.com/lslogis/claude-lean",

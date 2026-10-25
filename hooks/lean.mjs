@@ -139,9 +139,26 @@ function saveFull(command, stdout, stderr) {
   return file;
 }
 
+// 중복 설치 대비: lean 이 두 군데서 설치돼 같은 훅이 두 번 돌면, 같은 사건은 먼저 표시 파일을 만든 쪽만 처리한다.
+// 사건 열쇠는 tool_use_id·agent_id. 세션 시작만 5초 단위 시각을 쓴다(열쇠가 없으면 막지 않는다: 동시에 뜬 서브에이전트가 규칙을 못 받는 것보다 두 번 받는 게 낫다).
+// shortcut: 세션 시작이 5초 경계에 걸치면 드물게 두 번 들어간다, 문제가 보이면 사건 번호를 쓴다.
+const CLAIM_DIR = path.join(LEAN_DIR, 'claims');
+function claim(input, kind) {
+  const id = input?.tool_use_id || input?.agent_id || (kind === 'session' ? Math.floor(Date.now() / 5000) : null);
+  if (!id) return true;
+  const key = `${input?.session_id || 'x'}-${kind}-${input?.source || ''}-${id}`.replace(/[^\w-]/g, '_');
+  try {
+    fs.mkdirSync(CLAIM_DIR, DIR_MODE);
+    fs.writeFileSync(path.join(CLAIM_DIR, key), '', { flag: 'wx', ...FILE_MODE });
+    return true;
+  } catch (e) {
+    return e?.code !== 'EEXIST'; // 이미 다른 쪽이 처리 중이면 물러난다. 다른 오류면 그냥 처리한다.
+  }
+}
+
 function cleanOld() {
   const cutoff = Date.now() - KEEP_DAYS * 86400000;
-  for (const dir of [OUT_DIR, path.join(LEAN_DIR, 'state')]) {
+  for (const dir of [OUT_DIR, path.join(LEAN_DIR, 'state'), CLAIM_DIR]) {
     if (!fs.existsSync(dir)) continue;
     for (const f of fs.readdirSync(dir)) {
       try {
@@ -190,7 +207,7 @@ function handlePost(input) {
   // 큰 JSON 배열: 어떤 명령이든(파일 읽기 제외) 내용 그대로 표로.
   if (!FILE_READ.test(command)) {
     const table = jsonTable(res.stdout);
-    if (table) return done({ ...res, stdout: table });
+    if (table) return claim(input, 'post') ? done({ ...res, stdout: table }) : null;
   }
   if (!VERBOSE.test(command)) return null;
   const o = compactDetail(res.stdout), e = compactDetail(stderr);
@@ -199,6 +216,8 @@ function handlePost(input) {
   const stdoutNew = out ? out.text : o.text, stderrNew = err ? err.text : e.text;
   // 정리만으로 10% 미만이면 원문 그대로.
   if (!out && !err && stdoutNew.length + stderrNew.length > (res.stdout.length + stderr.length) * 0.9) return null;
+  // 원문 저장·장부 기록 전에: 중복 설치된 다른 lean 이 이미 이 결과를 맡았으면 물러난다.
+  if (!claim(input, 'post')) return null;
   let note = '';
   if (out || err || o.lossy || e.lossy) {
     const file = saveFull(command, res.stdout.replace(ANSI, ''), stderr.replace(ANSI, ''));
@@ -359,8 +378,10 @@ async function main() {
     if (!input && mode !== 'session') logError(mode, 'stdin 비어 있음(시간 초과?)');
     else if (mode === 'session') {
       try { cleanOld(); } catch {}
-      result = context('SessionStart', sessionContext(input || {}, rulesText()));
-    } else if (mode === 'subagent') result = context('SubagentStart', subagentContext(input, rulesText()));
+      if (claim(input, 'session')) result = context('SessionStart', sessionContext(input || {}, rulesText()));
+    } else if (mode === 'subagent') {
+      if (claim(input, 'subagent')) result = context('SubagentStart', subagentContext(input, rulesText()));
+    }
     else if (mode === 'precompact') handlePreCompact(input);
     else if (mode === 'preread') result = handlePreRead(input);
     else if (mode === 'post') result = handlePost(input);
